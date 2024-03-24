@@ -6,18 +6,18 @@ import { delay } from "../utils";
 
 export async function node(
   nodeId: number, // node id
-  N: number, // number of node
-  F: number, // nb faulty nodes
-  initialValue: Value,
-  isFaulty: boolean,
-  nodesAreReady: () => boolean,
-  setNodeIsReady: (index: number) => void
+  N: number, // number of nodes
+  F: number, // number of faulty nodes
+  initialValue: Value, // initial value
+  isFaulty: boolean, // indicates if the node is faulty
+  nodesAreReady: () => boolean, // function to check if all nodes are ready
+  setNodeIsReady: (index: number) => void // function to set the node as ready
 ) {
   const node = express();
   node.use(express.json());
   node.use(bodyParser.json());
 
-  // Initialisation
+  // Initialization
   let nodeState: NodeState = {
     killed: isFaulty,
     x: isFaulty ? null : initialValue,
@@ -27,6 +27,7 @@ export async function node(
   let proposals: Map<number, Value[]> = new Map();
   let votes: Map<number, Value[]> = new Map();
 
+  // Endpoint to check the status of the node
   node.get("/status", (req, res) => {
     if (isFaulty === true) {
       res.status(500).send("faulty");
@@ -35,16 +36,20 @@ export async function node(
     }
   });
 
+  // Endpoint to start the consensus algorithm
   node.get("/start", async (req, res) => {
+    // Wait until all nodes are ready
     while (!nodesAreReady()) {
       await delay(100);
     }
 
     if (!isFaulty) {
+      // Initialize the node state
       nodeState.k = 1;
       nodeState.x = initialValue;
       nodeState.decided = false;
 
+      // Send a proposal message to all nodes
       for (let i = 0; i < N; i++) {
         fetch(`http://localhost:${3000 + i}/message`, {
           method: "POST",
@@ -54,11 +59,12 @@ export async function node(
           body: JSON.stringify({
             k: nodeState.k,
             x: nodeState.x,
-            messageType: "P", // P pour proposition
+            messageType: "P", // P for proposal
           }),
         });
       }
     } else {
+      // If the node is faulty, initialize the state accordingly
       nodeState.decided = null;
       nodeState.x = null;
       nodeState.k = null;
@@ -66,11 +72,13 @@ export async function node(
     res.status(200).send("started");
   });
 
+  // Endpoint to stop the node
   node.get("/stop", async (req, res) => {
     nodeState.killed = true;
     res.status(200).send("killed");
   });
 
+  // Endpoint to get the current state of the node
   node.get("/getState", (req, res) => {
     if (isFaulty) {
       res.send({
@@ -84,31 +92,33 @@ export async function node(
     }
   });
 
-  //message
-
+  // Endpoint to receive messages from other nodes
   node.post(
     "/message",
     async (req: Request<any, any, any, any>, res: Response<any>) => {
       let { k, x, messageType } = req.body;
       if (!nodeState.killed && !isFaulty) {
         if (messageType == "P") {
+          // Process a proposal message
           if (!proposals.has(k)) proposals.set(k, []);
           proposals.get(k)!.push(x);
           const proposalList = proposals.get(k);
           if (proposalList && proposalList.length >= N - F) {
-            const countNo = proposalList.filter((x) => x == 0).length; // Remplacer "CN" par "countNo"
-            const countYes = proposalList.filter((x) => x == 1).length; // Remplacer "CY" par "countYes"
+            const countNo = proposalList.filter((x) => x == 0).length;
+            const countYes = proposalList.filter((x) => x == 1).length;
             let decisionValue =
-              countNo > N / 2 ? 0 : countYes > N / 2 ? 1 : "?"; // Renommer "x" par "decisionValue" pour cette opération
+              countNo > N / 2 ? 0 : countYes > N / 2 ? 1 : "?";
+            // Send a vote message to all nodes
             for (let i = 0; i < N; i++) {
               fetch(`http://localhost:${BASE_NODE_PORT + i}/message`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ k, x: decisionValue, messageType: "V" }), // Remplacer "type" par "messageType" et "2V" par "V" pour Vote
+                body: JSON.stringify({ k, x: decisionValue, messageType: "V" }),
               });
             }
           }
         } else if (messageType == "V") {
+          // Process a vote message
           if (!votes.has(k)) votes.set(k, []);
           votes.get(k)!.push(x);
           const voteList = votes.get(k);
@@ -131,6 +141,7 @@ export async function node(
                   ? 0
                   : 1;
               if (nodeState.k != null) nodeState.k += 1;
+              // Send a proposal message to all nodes
               for (let i = 0; i < N; i++) {
                 fetch(`http://localhost:${BASE_NODE_PORT + i}/message`, {
                   method: "POST",
